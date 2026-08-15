@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+# 15분봉 데이터는 용량 크면 git 제외 (필요시 주석 해제)
+# data/15min/*.parquet
+.DS_Store
