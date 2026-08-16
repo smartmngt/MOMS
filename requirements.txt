@@ -1,5 +1,0 @@
-flask>=3.0
-pandas>=2.0
-pyarrow>=14.0
-gunicorn>=21.0
-pykrx>=1.0.45
