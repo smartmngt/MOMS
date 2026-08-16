@@ -21,4 +21,5 @@ COPY templates/ ./templates/
 ENV PORT=8080
 EXPOSE 8080
 
-CMD exec gunicorn --bind :$PORT --workers 2 --threads 4 --timeout 120 app:app
+
+CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 120 app:app
