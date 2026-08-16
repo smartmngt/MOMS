@@ -1,0 +1,5 @@
+flask>=3.0
+pandas>=2.0
+pyarrow>=14.0
+gunicorn>=21.0
+finance-datareader>=0.9.50
