@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>급등 눌림 N자 — 1단계 스캔</title>
+<style>
+  :root{--bg:#0f1216;--card:#171c22;--line:#262d36;--fg:#e6e9ee;--sub:#9aa4b2;--accent:#3b82f6;--ok:#22c55e;--warn:#f59e0b;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;}
+  .wrap{max-width:640px;margin:0 auto;padding:16px;}
+  h1{font-size:17px;margin:4px 0 12px;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px;}
+  label{display:block;font-size:12px;color:var(--sub);margin:0 0 4px;}
+  .row{display:flex;gap:10px;}
+  .row>div{flex:1;}
+  input{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#0d1116;color:var(--fg);font-size:15px;}
+  button{width:100%;padding:13px;border:0;border-radius:10px;background:var(--accent);color:#fff;font-size:16px;font-weight:600;margin-top:12px;}
+  button:disabled{background:#39414c;color:#8b95a3;}
+  .bar{height:10px;background:#0d1116;border-radius:6px;overflow:hidden;border:1px solid var(--line);margin-top:12px;}
+  .bar>i{display:block;height:100%;width:0%;background:var(--accent);transition:width .3s;}
+  .status{font-size:13px;color:var(--sub);margin-top:8px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;}
+  th:nth-child(2),td:nth-child(2){text-align:left;}
+  .muted{color:var(--sub);}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;}
+  .pill.run{background:rgba(245,158,11,.15);color:var(--warn);}
+  .pill.done{background:rgba(34,197,94,.15);color:var(--ok);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>급등 눌림 N자 — 1단계 일봉 스캔</h1>
+
+  <div class="card">
+    <div class="row">
+      <div><label>시작일</label><input id="start" value="20260810"></div>
+      <div><label>종료일</label><input id="end" value="20260813"></div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div><label>종목수 제한 (0=전체)</label><input id="limit" type="number" value="30" min="0"></div>
+      <div><label>최소 등락률 %</label><input id="surge" type="number" value="15"></div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div><label>최소 거래대금(억)</label><input id="tabs" type="number" value="200"></div>
+      <div><label>거래대금 배수</label><input id="tmult" type="number" value="3"></div>
+    </div>
+    <button id="run">스캔 시작</button>
+    <div class="bar"><i id="fill"></i></div>
+    <div class="status" id="status">대기 중</div>
+  </div>
+
+  <div class="card" id="resultCard" style="display:none;">
+    <strong>결과 <span id="cnt" class="muted"></span></strong>
+    <div style="overflow-x:auto;margin-top:8px;">
+      <table id="tbl"><thead>
+        <tr><th>날짜</th><th>종목</th><th>등락%</th><th>거래대금(억)</th><th>배수</th></tr>
+      </thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let polling = null;
+
+function setRunning(on){
+  $("run").disabled = on;
+  $("run").textContent = on ? "스캔 중… (다른 화면 가도 계속 돌아감)" : "스캔 시작";
+}
+
+function isStale(st){
+  // running인데 서버가 60초 넘게 진행률 갱신을 못했으면 멈춘 것으로 판단
+  return st.running && st.server_now && st.updated_at && (st.server_now - st.updated_at > 60);
+}
+
+function render(st){
+  const total = st.total||0, done = st.done||0;
+  const pct = total>0 ? Math.round(done/total*100) : (st.running?3:0);
+  $("fill").style.width = pct + "%";
+
+  if(st.error){
+    $("status").innerHTML = '<span class="pill run">오류</span> ' + st.error;
+    setRunning(false); return;
+  }
+  if(isStale(st)){
+    $("status").innerHTML = '<span class="pill run">멈춤 감지</span> ' +
+      done + " / " + (total||"…") + "에서 중단된 듯 — 다시 시작하세요";
+    setRunning(false);
+    if(polling){ clearInterval(polling); polling = null; }
+    return;
+  }
+  if(st.running){
+    $("status").innerHTML = '<span class="pill run">진행중</span> ' +
+      done + " / " + (total||"…") + " 종목 · 발견 " + (st.found||0) + "건";
+    setRunning(true);
+  } else if(st.finished_at){
+    $("status").innerHTML = '<span class="pill done">완료</span> ' +
+      (st.total||0) + " 종목 · 발견 " + (st.found||0) + "건";
+    setRunning(false);
+    showResults(st.results||[]);
+  } else {
+    $("status").textContent = "대기 중"; setRunning(false);
+  }
+}
+
+function showResults(rows){
+  $("resultCard").style.display = "block";
+  $("cnt").textContent = "(" + rows.length + "건)";
+  const tb = $("tbl").querySelector("tbody");
+  tb.innerHTML = "";
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="5" class="muted" style="text-align:center;padding:16px;">조건에 맞는 종목 없음</td></tr>';
+    return;
+  }
+  for(const r of rows){
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td>"+r.date+"</td><td>"+r.name+" <span class='muted'>"+r.code+"</span></td>"+
+      "<td>"+r.change_pct+"</td><td>"+r.turnover_eok+"</td><td>"+(r.turnover_mult??"-")+"</td>";
+    tb.appendChild(tr);
+  }
+}
+
+async function poll(){
+  try{
+    const r = await fetch("/api/status", {cache:"no-store"});
+    const st = await r.json();
+    render(st);
+    if((!st.running || isStale(st)) && polling){ clearInterval(polling); polling = null; }
+  }catch(e){ /* 일시 오류 무시, 다음 폴에서 재시도 */ }
+}
+
+function startPolling(){
+  if(polling) return;
+  poll();
+  polling = setInterval(poll, 1500);
+}
+
+$("run").onclick = async () => {
+  setRunning(true);
+  $("resultCard").style.display = "none";
+  $("status").textContent = "시작 중…";
+  const body = {
+    start: $("start").value.trim(),
+    end: $("end").value.trim(),
+    limit: parseInt($("limit").value||"0", 10),
+    surge_min_pct: parseFloat($("surge").value||"15"),
+    turnover_abs_min_eok: parseFloat($("tabs").value||"200"),
+    turnover_mult_min: parseFloat($("tmult").value||"3"),
+  };
+  try{
+    const r = await fetch("/api/scan", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+    const j = await r.json();
+    if(!j.ok){
+      $("status").innerHTML = '<span class="pill run">시작 실패</span> ' + (j.error||"");
+      if(!j.job_id) setRunning(false);
+    }
+    startPolling();
+  }catch(e){
+    $("status").textContent = "요청 실패: " + e; setRunning(false);
+  }
+};
+
+// 다른 화면 갔다 돌아오면 서버 잡 상태를 즉시 이어받음
+document.addEventListener("visibilitychange", () => { if(!document.hidden) startPolling(); });
+window.addEventListener("load", startPolling);
+</script>
+</body>
+</html>
